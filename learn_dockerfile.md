@@ -80,6 +80,56 @@ Some of the most common instructions in a Dockerfile include:
 
 ## `FROM`
 
+```Dockerfile
+FROM [--platform=<platform>] <image> [AS <name>]
+```
+
+Or
+
+```Dockerfile
+FROM [--platform=<platform>] <image>[:<tag>] [AS <name>]
+```
+
+Or
+
+```Dockerfile
+FROM [--platform=<platform>] <image>[@<digest>] [AS <name>]
+```
+
+The FROM instruction initializes a new build stage and sets the base image for subsequent instructions. As such, a valid Dockerfile must start with a FROM instruction. The image can be any valid image.
+
+- `ARG` is the only instruction that may precede FROM in the Dockerfile.
+
+- `FROM` can appear multiple times within a single Dockerfile to ***create multiple images*** or <u>use one build stage as a dependency for another</u>. Simply make a note of the last image ID output by the commit before each new `FROM` instruction. Each `FROM` instruction clears any state created by previous instructions.
+
+- Optionally a name can be given to a new **build stage** by adding `AS name` to the `FROM` instruction. The name can be used in subsequent `FROM <name>`, `COPY --from=<name>`, and `RUN --mount=type=bind,from=<name>` instructions to refer to the image built in this stage.
+
+- The `tag` or `digest` values are optional. If you omit either of them, the builder assumes a `latest` tag by default. The ***builder returns an error*** if it can't find the `tag` value.
+
+### Understand how ARG and FROM interact
+
+`FROM` instructions support variables that are declared by any `ARG` instructions that occur before the first `FROM`.
+
+```Dockerfile
+ARG  CODE_VERSION=latest
+FROM base:${CODE_VERSION}
+CMD  /code/run-app
+
+FROM extras:${CODE_VERSION}
+CMD  /code/run-extras
+```
+
+An `ARG` declared before a `FROM` is outside of a build stage, so it can't be used in any instruction after a `FROM`. To use the default value of an `ARG` declared before the first `FROM` use an `ARG` instruction without a value inside of a build stage:
+
+```Dockerfile
+ARG VERSION=latest
+FROM busybox:$VERSION
+ARG VERSION
+RUN echo $VERSION > image_version
+```
+
+### best practices with `FROM`
+
 Whenever possible, use current official images as the basis for your images. 
 Docker recommends the Alpine image as it is tightly controlled and small in size,
 while still being a full Linux distribution.
@@ -134,6 +184,86 @@ Also, you should use `WORKDIR` instead of proliferating instructions like `RUN c
 which are ***hard to read, troubleshoot, and maintain***.
 
 ## `COPY`
+
+### What is a build context?
+
+The build context is ***the <u>set of files</u> that your build can access***. The positional argument that you pass to the build command specifies the context that you want to use for the build:
+
+```
+docker build [OPTIONS] PATH | URL | -
+                       ^^^^^^^^^^^^^^
+```
+
+### What is a multi-stage build?
+
+With multi-stage builds, you use multiple `FROM` statements in your Dockerfile. Each `FROM` instruction can use a different base, and each of them begins a new stage of the build. You can ***<u>selectively</u> copy artifacts from one stage to another, leaving behind*** everything you don't want in the final image.
+
+The following Dockerfile has two separate stages: one for building a binary, and another where the binary gets copied from the first stage into the next stage.
+
+```Dockerfile
+# syntax=docker/dockerfile:1
+FROM golang:1.23
+WORKDIR /src
+COPY <<EOF ./main.go
+package main
+
+import "fmt"
+
+func main() {
+  fmt.Println("hello, world")
+}
+EOF
+RUN go build -o /bin/hello ./main.go
+
+FROM scratch
+COPY --from=0 /bin/hello /bin/hello
+CMD ["/bin/hello"]
+```
+
+You only need the single Dockerfile. No need for a separate build script. Just run `docker build`.
+
+```
+docker build -t hello .
+```
+
+The end result is a tiny production image with nothing but the binary inside. None of the build tools required to build the application are included in the resulting image.
+
+How does it work? The second `FROM` instruction starts a new build stage with the `scratch` image as its base. The `COPY --from=0` line copies just the built artifact from the previous stage into this new stage. The Go SDK and any intermediate artifacts are left behind, and not saved in the final image.
+
+### best practices
+
+`ADD` and `COPY` are ***functionally similar***. `COPY` supports basic copying of files into the container, from ***the build context*** or from ***a stage in a multi-stage build***. `ADD` supports features for ***fetching files from remote*** HTTPS and Git URLs, and ***extracting tar files automatically*** when adding files from the build context.
+
+You'll mostly want to use `COPY` for copying files from one stage to another in a multi-stage build. If you need to add files from the build context to the container temporarily to execute a `RUN` instruction, you can often substitute the `COPY` instruction with a bind mount instead. For example, to temporarily add a `requirements.txt` file for a `RUN pip install` instruction:
+
+```Dockerfile
+RUN --mount=type=bind,source=requirements.txt,target=/tmp/requirements.txt \
+    pip install --requirement /tmp/requirements.txt
+```
+
+Bind ***mounts are more efficient*** than `COPY` for including files from the build context in the container. Note that bind-mounted files are only added temporarily for a single `RUN` instruction, and ***don't persist in the final image***. If you need to include files from the build context in the final image, use `COPY`.
+
+## `ADD`
+
+https://docs.docker.com/reference/dockerfile/#add
+
+`ADD` has two forms. The latter form is required for paths containing whitespace.
+
+```Dockerfile
+ADD [OPTIONS] <src> ... <dest>
+ADD [OPTIONS] ["<src>", ... "<dest>"]
+```
+
+The `ADD` instruction copies new files or directories from `<src>` and adds them to the filesystem of the image at the path `<dest>`.
+
+Files and directories can be copied from 
+- the build context [???],
+- a remote URL, or
+- a Git repository.
+
+### best practices 
+
+The `ADD` instruction is best for when you need to download a remote artifact as part of your build. `ADD` is better than manually adding files using something like `wget` and `tar`, because it ensures a more precise build cache. `ADD` also has built-in support for checksum validation of the remote resources, and a protocol for parsing branches, tags, and subdirectories from Git URLs.
 
 ## `RUN`
 
