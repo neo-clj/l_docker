@@ -86,6 +86,49 @@ while still being a full Linux distribution.
 
 ## `WORKDIR`
 
+The `WORKDIR` instruction sets the working directory for any 
+- `RUN`, 
+- `CMD`, 
+- `ENTRYPOINT`, 
+- `COPY` and 
+- `ADD` 
+
+instructions that follow it in the Dockerfile.
+If the `WORKDIR` doesn't exist, it ***will be created even if it's not used*** in any subsequent Dockerfile instruction.
+
+The `WORKDIR` instruction can be used multiple times in a Dockerfile.
+If a relative path is provided, it will be relative to the path of the previous `WORKDIR` instruction.
+For example:
+
+```Dockerfile
+WORKDIR /a
+WORKDIR b
+WORKDIR c
+RUN pwd
+```
+
+The output of the final `pwd` command in this Dockerfile would be `/a/b/c`.
+
+The `WORKDIR` instruction can resolve environment variables previously set using `ENV`.
+You can only use environment variables explicitly set in the Dockerfile.
+For example:
+
+```Dockerfile
+ENV DIRPATH=/path
+WORKDIR $DIRPATH/$DIRNAME
+RUN pwd
+```
+
+The output of the final `pwd` command in this Dockerfile would be `/path/$DIRNAME`.
+
+If not specified, the default working directory is `/`. 
+In practice, if you aren't building a Dockerfile from scratch (`FROM scratch`), 
+the `WORKDIR` may likely be set by the base image you're using.
+
+Therefore, to avoid ***unintended operations in unknown directories***, it's best practice to set your `WORKDIR` explicitly.
+
+---
+
 For ***clarity and reliability***, you should always use absolute paths for your `WORKDIR`. 
 Also, you should use `WORKDIR` instead of proliferating instructions like `RUN cd … && do-something`,
 which are ***hard to read, troubleshoot, and maintain***.
@@ -259,7 +302,86 @@ RUN apt-get update && apt-get install -y ...
 
 ## `EXPOSE`
 
+```Dockerfile
+EXPOSE <port> [<port>/<protocol>...]
+```
+
+The `EXPOSE` instruction informs Docker that the **container** listens on the specified network ports **at runtime**. You can specify whether the port listens on TCP or UDP, and the <u>default is TCP</u> if you don't specify a protocol.
+
+The `EXPOSE` instruction ***doesn't actually publish*** the port. It functions as a type of **documentation between the person who builds the image and the person who runs the container**, about which ports are intended to be published. To publish the port when running the container, use the `-p` flag on `docker run` to publish and map one or more ports, or the `-P` flag to publish all exposed ports and map them to <u>high-order</u> [???] ports.
+
+By default, `EXPOSE` assumes TCP. You can also specify UDP:
+
+```Dockerfile
+EXPOSE 80/udp
+```
+
+To expose on both TCP and UDP, include two lines:
+
+```Dockerfile
+EXPOSE 80/tcp
+EXPOSE 80/udp
+```
+
+In this case, if you use `-P` with `docker run`, the port will be exposed once for TCP and once for UDP. Remember that `-P` uses an ephemeral high-ordered host port on the host, so TCP and UDP doesn't use the same port.
+
+Regardless of the EXPOSE settings, you can <u>override</u> them at runtime by using the `-p` flag. For example
+
+```Dockerfile
+docker run -p 80:80/tcp -p 80:80/udp ...
+```
+
+---
+
+The `EXPOSE` instruction indicates the **ports on which a <u>container</u> listens for connections**. Consequently, you should use the common, traditional port for your application. For example, an image containing the Apache web server would use `EXPOSE 80`, while an image containing MongoDB would use `EXPOSE 27017` and so on.
+
+For external access, your users can execute `docker run` with a flag indicating how to map the specified port to the port of their choice. For **container linking**, Docker provides environment variables for the path from the recipient container back to the source [container](for example, `MYSQL_PORT_3306_TCP`).
+
 ## `USER`
+
+```Dockerfile
+USER <user>[:<group>]
+```
+
+or 
+
+```Dockerfile
+USER <UID>[:<GID>]
+```
+
+The `USER` instruction sets the user name (or UID) and optionally the user group (or GID)
+to use as the default user and group for the **remainder of the current <u>stage</u>**.
+The specified user is used for `RUN` instructions and at runtime,
+runs the relevant `ENTRYPOINT` and `CMD` commands.
+
+---
+
+If a service can run without privileges, use `USER` to change to a non-root user.
+Start by creating the user and group in the Dockerfile with something like the following example:
+
+```Dockerfile
+RUN groupadd -r postgres && useradd --no-log-init -r -g postgres postgres
+```
+
+#### Note 1
+Consider an explicit UID/GID.
+Users and groups in an image are assigned a non-deterministic UID/GID 
+in that the "next" UID/GID is assigned regardless of image rebuilds.
+So, if it's critical, you should assign an explicit UID/GID.
+
+#### Note 2
+
+Due to an unresolved bug in the Go archive/tar package's handling of sparse files,
+attempting to create a user with a significantly large UID inside a Docker container
+can lead to disk exhaustion because `/var/log/faillog` in the container layer is filled with NULL (\0) characters.
+A workaround is to pass the `--no-log-init` flag to useradd.
+The Debian/Ubuntu `adduser` wrapper does not support this flag.
+
+---
+
+Avoid installing or using `sudo` as it has unpredictable TTY and signal-forwarding behavior that can cause problems.
+
+Lastly, to reduce layers and complexity, avoid switching `USER` back and forth frequently.
 
 ## `CMD`
 
