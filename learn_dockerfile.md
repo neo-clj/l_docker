@@ -261,6 +261,52 @@ Files and directories can be copied from
 - a remote URL, or
 - a Git repository.
 
+The `ADD` and `COPY` instructions are functionally similar, but serve slightly different purposes.
+
+### Source
+
+You can specify multiple source files or directories with `ADD`. The **last argument must always be the destination**. For example, to add two files, `file1.txt` and `file2.txt`, <u>from the build context</u> to `/usr/src/things/` in the build container:
+
+```Dockerfile
+ADD file1.txt file2.txt /usr/src/things/
+```
+
+If you specify multiple source files, either ***directly or using a wildcard***, then the destination must be a directory (must end with a slash `/`).
+
+To add files from a remote location, you can specify a URL or the address of a Git repository as the source. For example:
+
+```Dockerfile
+ADD https://example.com/archive.zip /usr/src/things/
+ADD git@github.com:user/repo.git /usr/src/things/
+```
+
+BuildKit ***detects the type*** of `<src>` and processes it accordingly.
+
+- If `<src>` is a local file or directory, the contents of the directory are ***<u>copied to</u>*** the specified destination.
+- If `<src>` is a local tar archive, it is ***<u>decompressed and extracted to</u>*** the specified destination.
+- If `<src>` is a URL, the contents of the URL are ***<u>downloaded and placed at</u>*** the specified destination.
+- If `<src>` is a Git repository, the repository is ***<u>cloned to</u>*** the specified destination.
+
+#### Adding files from the build context
+
+Any relative or local path that doesn't begin with a 
+
+- `http://`,
+- `https://`, or
+- `git@`
+
+protocol prefix is considered a local file path. The local file path is ***relative to the build context***. For example, if the build context is the current directory, `ADD file.txt /` adds the file at `./file.txt` to the root of the filesystem in the build container.
+
+When adding source files from the build context, their paths are interpreted as relative to the root of the context. If you specify a relative path leading outside of the build context, such as `ADD ../something /something`, **parent directory paths are stripped out** automatically. The effective source path in this example becomes `ADD something /something`.
+
+If the source is a directory, the contents of the directory are copied, including filesystem metadata. <u>The directory itself isn't copied, only its contents</u>. If it contains subdirectories, these are also copied, and merged with any existing directories at the destination. Any conflicts are resolved in favor of the content being added, on a file-by-file basis, except if you're trying to copy a directory onto an existing file, in which case an error is raised.
+
+If the source is a file, the file and its metadata are copied to the destination. File permissions are preserved.
+
+If the source is a file and a directory with the same name exists at the destination, an error is raised.
+
+If you pass a Dockerfile through stdin to the build (`docker build - < Dockerfile`), there is no build context. In this case, you can only use the `ADD` instruction to copy remote files. You can also pass a tar archive through stdin: (`docker build - < archive.tar`), the Dockerfile at the root of the archive and the rest of the archive will be used as the context of the build.
+
 ### best practices 
 
 The `ADD` instruction is best for when you need to download a remote artifact as part of your build. `ADD` is better than manually adding files using something like `wget` and `tar`, because it ensures a more precise build cache. `ADD` also has built-in support for checksum validation of the remote resources, and a protocol for parsing branches, tags, and subdirectories from Git URLs.
